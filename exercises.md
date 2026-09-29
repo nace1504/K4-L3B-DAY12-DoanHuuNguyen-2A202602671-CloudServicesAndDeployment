@@ -3,10 +3,10 @@
 > **Bài làm cá nhân.** Trả lời bằng lời của chính bạn, dựa trên những gì bạn
 > quan sát được khi chạy code — không sao chép đáp án của người khác.
 >
-> Cách trả lời: thay dòng `> *Câu trả lời của bạn*` bằng câu trả lời.
+> Cách trả lời: thay dòng placeholder dưới mỗi câu bằng câu trả lời.
 > `grade.py` đếm số câu đã trả lời (15 điểm cho 10 câu).
 >
-> Họ và tên: ..........................  Mã học viên: ..........................
+> Họ và tên: Doãn Hữu Nguyên  Mã học viên: 2A202602671
 
 ---
 
@@ -48,12 +48,18 @@ docker images | grep agent
 
 | Bản | Dung lượng |
 |-----|-----------|
-| 1 stage (bản đầu) | ... MB |
-| Multi-stage | ... MB |
+| 1 stage (bản đầu) | 1.73 GB (1730 MB) |
+| Multi-stage | 271 MB |
+
+*Số lấy từ cột DISK USAGE của `docker images`.*
 
 Giải thích: phần dung lượng chênh lệch đó là những gì?
 
-> *Câu trả lời của bạn*
+> 1 stage 1.73 GB, multi-stage 271 MB, nhỏ hơn khoảng 6 lần.
+> Phần lớn chênh lệch nằm ở base image: `python:3.11` bản đầy đủ mang theo gcc, header C, rất nhiều thư viện hệ thống và công cụ build, còn `python:3.11-slim` chỉ giữ những gì cần để chạy Python.
+> Ở bản multi-stage, stage builder cài thư viện vào `/install` rồi stage runtime chỉ copy đúng thư mục đó sang, nên những thứ chỉ dùng lúc build bị bỏ lại hết.
+> Bản single còn chạy `pip install` không có `--no-cache-dir` nên cache của pip nằm luôn trong image, và `COPY . .` kéo theo cả tài liệu, `grade.py`... dù `.dockerignore` đã chặn `.env`, `.venv`, `.git`, `tests`.
+> Image multi vẫn chưa gọn nhất vì `requirements.txt` đang gộp cả thư viện test (pytest, fakeredis, httpx, PyYAML), nếu tách ra `requirements-dev.txt` thì image còn nhỏ hơn nữa.
 
 ---
 
@@ -63,7 +69,12 @@ Sửa một ký tự trong `app/main.py` rồi build lại. Với Dockerfile c�
 layer nào được dùng lại từ cache, layer nào phải chạy lại? Nếu bạn đặt
 `COPY . .` lên trước `RUN pip install` thì kết quả khác thế nào?
 
-> *Câu trả lời của bạn*
+> Em thêm một dòng comment vào cuối `app/main.py` rồi build lại cả hai bản để so sánh.
+> Với bản multi, các layer `WORKDIR /build`, `COPY requirements.txt`, `RUN pip install`, `RUN useradd`, `WORKDIR /app`, `COPY --from=builder /install /usr/local` đều báo `CACHED`, chỉ `COPY app ./app` và `COPY utils ./utils` chạy lại, cả lần build mất 1.15 s.
+> Lý do là Docker cache theo từng layer: layer đầu tiên có input thay đổi là `COPY app`, nên nó và mọi layer phía sau đều chạy lại, kể cả `COPY utils` dù `utils` không đổi gì.
+> Bản single (`Dockerfile.single`) đặt `COPY . .` trước `RUN pip install`, nên sửa một dòng comment cũng làm layer COPY thay đổi và kéo theo `pip install` chạy lại toàn bộ: bước này mất 152.1 s, cả lần build mất 157.4 s.
+> Lần đo này pip còn gặp `ReadTimeoutError` khi tải từ `files.pythonhosted.org` và phải retry, tức là mỗi lần sửa code ở bản single đều phụ thuộc vào mạng.
+> Tính ra bản single chậm hơn khoảng 137 lần (157.4 s so với 1.15 s), và kể cả khi mạng tốt thì mỗi lần sửa code nó vẫn phải tải và cài lại toàn bộ thư viện, còn bản multi thì không.
 
 ---
 
@@ -73,7 +84,12 @@ Container mặc định chạy bằng root. Mô tả chuỗi sự kiện dẫn t
 trong code Python của bạn" tới "kẻ tấn công có quyền cao trên máy host", và
 lệnh `USER` cắt đứt chuỗi đó ở chỗ nào.
 
-> *Câu trả lời của bạn*
+> Giả sử code Python có lỗ hổng kiểu command injection hoặc RCE, kẻ tấn công sẽ chạy được lệnh bên trong container với đúng quyền của process app.
+> Nếu container chạy root thì process đó là uid 0, mà container dùng chung kernel với host nên uid 0 trong container cũng chính là uid 0 trên host (khi không bật user namespace).
+> Lúc này chỉ cần thêm một lỗ hổng container escape, hoặc container lỡ được mount thư mục của host hay `docker.sock`, là kẻ tấn công thành root trên máy host.
+> Lệnh `USER appuser` cắt chuỗi này ngay ở bước thứ hai, vì lệnh của kẻ tấn công chỉ chạy với uid 10001: em chạy `docker compose exec agent id` thì ra `uid=10001(appuser) gid=10001(appuser) groups=10001(appuser)`.
+> Với user này, kẻ tấn công không sửa được file hệ thống, cũng không sửa được code app vì code thuộc root và chỉ đọc được, nên muốn leo thang quyền khó hơn nhiều.
+> Kể cả khi thoát được ra ngoài container thì cũng chỉ là một user thường trên host, không phải root.
 
 ---
 
