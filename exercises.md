@@ -32,7 +32,12 @@ Chạy service và gọi `/ask` vài lần. Dán một dòng log JSON bạn thu 
 nêu **hai** việc bạn làm được với dòng log đó mà `print("đã trả lời xong")`
 không làm được.
 
-> *Câu trả lời của bạn*
+> Em chạy stack bằng `docker compose up -d --build`, gọi `/ask` với `X-User-Id: sv01` rồi xem `docker compose logs agent`, thu được dòng này:
+> `{"event": "ask_completed", "level": "info", "timestamp": "2026-09-29T04:05:33.474646+00:00", "user_id": "sv01", "tokens_in": 3, "tokens_out": 37, "cost_usd": 2.265e-05}`
+> Việc thứ nhất: mỗi dòng là một JSON có sẵn `user_id` và `cost_usd`, nên em lọc được theo user rồi cộng `cost_usd` để biết ai tiêu nhiều tiền nhất trong ngày.
+> Ngay trong lần test, em lọc theo `"event": "ask_completed"` và đếm được 11 dòng (1 của sv01, 10 của sv-rl), khớp đúng số request trả 200.
+> Việc thứ hai: có `level` và `timestamp` theo chuẩn ISO UTC, nên hệ thống log trên cloud đếm được số dòng `"level": "error"` trong 5 phút gần nhất để bắn cảnh báo, kể cả khi log gom từ nhiều container.
+> Còn `print("đã trả lời xong")` chỉ là một câu chữ, không biết của user nào, tốn bao nhiêu, lúc nào, muốn thống kê thì phải tự viết regex đoán.
 
 ---
 
@@ -100,7 +105,12 @@ phút đồng hồ (reset lúc giây 00), một người dùng có thể gửi t
 request trong 2 giây liên tiếp khi hạn mức là 10/phút? Giải thích cách đạt được
 con số đó.
 
-> *Câu trả lời của bạn*
+> Nếu đếm theo phút đồng hồ thì trong 2 giây liên tiếp một user gửi được tối đa 20 request.
+> Cách làm là gửi 10 request lúc hh:mm:59, cả 10 đều hợp lệ; sang hh:(mm+1):00 bộ đếm reset về 0 nên gửi tiếp 10 request nữa vẫn hợp lệ.
+> Tức là hạn mức "10/phút" thực chất cho gấp đôi ngay tại ranh giới giữa hai phút.
+> Sliding window của em không có kẽ hở này vì mỗi lần check nó đếm số request trong 60 giây tính ngược từ hiện tại (`zremrangebyscore` xóa những request cũ hơn `now - 60` rồi `zcard`), nên 10 request lúc :59 vẫn còn nằm trong cửa sổ ở giây :00.
+> Em test tay 15 request liên tiếp với `X-User-Id: sv-rl` và nhận được dãy `200 200 200 200 200 200 200 200 200 200 429 429 429 429 429`, các request bị chặn có header `Retry-After: 60`.
+> Đúng 10 request đầu được qua vì em đếm trước rồi mới ghi, và request bị 429 không được ghi vào ZSET nên spam thêm cũng không kéo dài thời gian bị chặn.
 
 ---
 
@@ -109,7 +119,14 @@ con số đó.
 Hai cơ chế này khác nhau ở điểm nào? Cho một tình huống mà rate limit cho qua
 nhưng cost guard phải chặn, và một tình huống ngược lại.
 
-> *Câu trả lời của bạn*
+> Rate limit giới hạn số lượng request trong một khoảng ngắn (10 request/60 giây), trả 429 và đợi một lúc là gọi lại được.
+> Cost guard giới hạn số tiền cộng dồn trong cả tháng theo từng user, trả 402 và chỉ hết chặn khi sang tháng mới hoặc được nâng ngân sách.
+> Tình huống rate limit cho qua nhưng cost guard chặn: em chạy agent với `MONTHLY_BUDGET_USD=0.0001` (đặt bằng biến shell, không sửa `.env`) rồi gọi `/ask` 10 lần liên tiếp với `X-User-Id: sv-budget`, nhận được `200 200 200 200 402 402 402 402 402 402`.
+> Chi phí 4 lần đầu tăng dần 1.995e-05, 3.105e-05, 3.765e-05, 4.44e-05 USD vì lịch sử hội thoại được gửi kèm, tổng 0.00013305 USD đã vượt ngân sách nên từ request thứ 5 bị 402, trong khi cả 10 request vẫn nằm trong hạn mức 10/phút nên không cái nào bị 429.
+> Em để ý request thứ 4 vẫn được cho qua vì lúc check tổng mới là 8.865e-05 ≤ 0.0001 (check dùng `estimated_cost=0`), cộng xong thì tổng thành 1.3305e-04, vượt ngân sách khoảng 33%; muốn chặt hơn thì phải ước lượng chi phí trước rồi truyền vào `estimated_cost`.
+> Với LLM thật cũng vậy: một user gọi thong thả 5 request/phút nhưng mỗi request hàng chục nghìn token thì chỉ vài ngày là cháy ngân sách.
+> Tình huống ngược lại: một script lỗi gọi `/ask` 15 lần liên tiếp với câu "test", mỗi lần chỉ tốn khoảng 2e-05 USD nên ngân sách 10 USD gần như không đổi, nhưng rate limit vẫn chặn từ request thứ 11 như em thấy ở Câu 6.
+> Vì vậy cần cả hai: rate limit chống spam và bảo vệ server, cost guard chống cháy túi.
 
 ---
 
