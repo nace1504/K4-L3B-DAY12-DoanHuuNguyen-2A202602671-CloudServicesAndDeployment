@@ -1,0 +1,21 @@
+# CP4 — Override để thử scale ngang sau Nginx, không sửa docker-compose.yml gốc.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.lb.yml up -d --build --scale agent=3
+#
+# Agent bỏ map cổng 8000 ra máy (3 container không thể cùng bind một cổng host),
+# chỉ mở 8000 trong mạng compose; Nginx nhận request ở http://localhost:8080 rồi chia đều.
+
+services:
+  agent:
+    ports: !reset []
+    expose:
+      - "8000"
+
+  nginx:
+    image: nginx:alpine
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "8080:80"   # cổng 80 trên Windows bị hệ thống giữ, dùng 8080
+    depends_on:
+      - agent

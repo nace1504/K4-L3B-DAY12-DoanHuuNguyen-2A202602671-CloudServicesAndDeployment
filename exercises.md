@@ -135,7 +135,13 @@ nhưng cost guard phải chặn, và một tình huống ngược lại.
 Nếu gộp hai endpoint làm một và cho nó kiểm tra Redis, chuyện gì xảy ra với cụm
 3 container khi Redis mất kết nối 30 giây? Trả lời theo đúng thứ tự sự kiện.
 
-> *Câu trả lời của bạn*
+> Nếu gộp làm một và cho nó ping Redis, khi Redis mất kết nối 30 giây thì cả 3 container cùng lúc trả 503 ở probe đó, vì cả 3 dùng chung một Redis.
+> Orchestrator hiểu liveness fail là "process hỏng" nên đánh dấu cả 3 unhealthy rồi restart cả 3 gần như cùng lúc, trong lúc restart thì không còn instance nào nhận request và các request đang xử lý dở bị cắt ngang.
+> Khi Redis quay lại sau 30 giây thì các container vẫn đang khởi động lại, có khi còn restart tiếp nếu lúc khởi động Redis chưa kịp lên, nên sự cố Redis 30 giây biến thành cả dịch vụ sập lâu hơn.
+> Tách ra thì khác: em tắt Redis bằng `docker compose stop redis`, `/health` vẫn trả `200 {"status":"ok",...}` còn `/ready` trả `503 {"status":"not ready","redis":false}`.
+> Sau 35 giây Redis tắt, `docker compose ps` vẫn báo agent `Up (healthy)` và `RestartCount` vẫn là 0, tức là container không bị restart vô ích.
+> Khi `docker compose start redis`, `/ready` tự về `200 {"status":"ready","redis":true}` mà không cần làm gì, load balancer chỉ việc đẩy traffic vào lại.
+> Chiều ngược lại cũng đúng: khi em `docker compose stop agent`, container tắt trong 0.69 s và log có `service_stopped`, vì lúc nhận SIGTERM app bật cờ để `/health` và `/ready` trả 503 rồi nhường cho uvicorn tắt êm.
 
 ---
 
@@ -145,7 +151,12 @@ Chạy `docker compose up --scale agent=3` rồi gọi `/ask` nhiều lần vớ
 `X-User-Id`. Quan sát `history_length` trong response. Nếu lịch sử được lưu
 trong một dict Python thay vì Redis, bạn sẽ thấy con số đó thay đổi thế nào?
 
-> *Câu trả lời của bạn*
+> Em tạo file `docker-compose.lb.yml` (không sửa file gốc) để chạy 3 container agent sau Nginx, rồi gọi `/ask` qua `http://localhost:8080` 6 lần với cùng `X-User-Id: sv-scale`.
+> `history_length` trả về lần lượt là `0 2 4 6 8 10`, tăng đều 2 mỗi lượt (một câu hỏi của user và một câu trả lời của assistant).
+> Xem log `ask_completed` của sv-scale thì 6 request rơi lần lượt vào agent-3, agent-2, agent-1, agent-3, agent-2, agent-1, tức là Nginx chia round-robin và không có hai lượt liên tiếp nào vào cùng một container.
+> Dù vậy lịch sử vẫn liền mạch vì cả 3 container đọc ghi chung key `history:sv-scale` trong Redis, `tokens_in` trong log cũng tăng dần 1, 43, 88, 134, 179, 231 do lịch sử được gửi kèm.
+> Nếu lịch sử nằm trong một dict Python thì mỗi container có một dict riêng trong RAM, nên với đúng thứ tự trên em sẽ thấy `0 0 0 2 2 2`: ba lượt đầu container nào cũng gặp user lần đầu, ba lượt sau mỗi container chỉ nhớ đúng một lượt của chính nó.
+> Agent sẽ "mất trí nhớ" ngẫu nhiên tùy request rơi vào đâu, và restart container là mất sạch lịch sử.
 
 ---
 
