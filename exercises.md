@@ -16,7 +16,13 @@ Trong `Settings`, `agent_api_key` không có giá trị mặc định nên app c
 khi khởi động nếu thiếu biến môi trường. Hãy mô tả một tình huống cụ thể mà
 việc "chết sớm" này cứu bạn, so với việc để mặc định `"changeme"`.
 
-> *Câu trả lời của bạn*
+> Giả sử em deploy lên Railway mà quên set biến `AGENT_API_KEY` trong tab Variables.
+> Vì `agent_api_key` không có mặc định nên `Settings()` ném `ValidationError` ngay lúc khởi động, container không lên được, health check fail và Railway báo deploy lỗi, bản cũ vẫn chạy tiếp.
+> Em thấy lỗi ngay trong lúc đang ngồi xem log deploy nên vào set biến rồi deploy lại là xong.
+> Nếu để mặc định `"changeme"` thì app vẫn chạy bình thường, `/ask` mở ra public với cái khóa nằm sẵn trong source trên repo public, ai đọc code cũng gọi được.
+> Trường hợp đó em sẽ không thấy lỗi gì cả, chỉ biết khi nhìn hóa đơn LLM tăng bất thường.
+> Em có thử chạy `python -c "from app.config import Settings; Settings(_env_file=None)"` (dùng `_env_file=None` để bỏ qua file `.env`, giống môi trường cloud chưa set biến) và nhận được `ValidationError: 1 validation error for Settings` với dòng `agent_api_key  Field required [type=missing, input_value={}, input_type=dict]`.
+> Nghĩa là thiếu secret thì app từ chối chạy luôn, lỗi lộ ra lúc deploy chứ không phải lúc đã bị người khác dùng chùa.
 
 ---
 
