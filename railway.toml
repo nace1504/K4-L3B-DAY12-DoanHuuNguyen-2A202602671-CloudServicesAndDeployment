@@ -10,7 +10,8 @@ builder = "dockerfile"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand = "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+# Không đặt startCommand: dùng CMD của Dockerfile (sh -c "exec uvicorn ... ${PORT:-8000}")
+# để $PORT chắc chắn được shell mở ra và uvicorn là PID 1 nhận SIGTERM.
 healthcheckPath = "/health"
 healthcheckTimeout = 30
 restartPolicyType = "on_failure"

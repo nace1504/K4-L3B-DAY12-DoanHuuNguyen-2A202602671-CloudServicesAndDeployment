@@ -10,17 +10,17 @@
 
 | Mục | Nội dung |
 |-----|----------|
-| Họ và tên | (điền họ tên) |
-| Mã học viên | (điền mã học viên) |
-| Repo | (điền link repo K4-L3B-DAY12-HoVaTen-MSSV-CloudServicesAndDeployment) |
+| Họ và tên | Doãn Hữu Nguyên |
+| Mã học viên | 2A202602671 |
+| Repo | https://github.com/nace1504/K4-L3B-DAY12-DoanHuuNguyen-2A202602671-CloudServicesAndDeployment |
 
 ## Service
 
 | Mục | Nội dung |
 |-----|----------|
-| Public URL | https://TODO-thay-bang-url-that.up.railway.app |
-| Platform | Railway / Render / Cloud Run — (điền platform bạn dùng) |
-| Ngày deploy | (điền ngày) |
+| Public URL | https://agent-production-9efc.up.railway.app |
+| Platform | Railway (project `day12-agent`: service `agent` build từ Dockerfile + service `Redis`) |
+| Ngày deploy | 2026-09-29 |
 
 ## Biến Môi Trường Đã Set Trên Cloud
 
@@ -29,8 +29,8 @@ Ghi tên biến và **nguồn giá trị**, không ghi giá trị:
 | Biến | Đã set | Ghi chú |
 |------|--------|---------|
 | `PORT` | ✅ | platform tự gán |
-| `AGENT_API_KEY` | ✅ | đặt trong dashboard, không nằm trong repo |
-| `REDIS_URL` | ✅ | (điền: Redis add-on của platform / Upstash / ...) |
+| `AGENT_API_KEY` | ✅ | đặt bằng `railway variable set`, khóa riêng cho cloud (khác khóa local), không nằm trong repo |
+| `REDIS_URL` | ✅ | tham chiếu `${{Redis.REDIS_URL}}` tới service Redis của Railway (mạng nội bộ `redis.railway.internal:6379`) |
 | `RATE_LIMIT_PER_MINUTE` | ✅ | 10 |
 | `MONTHLY_BUDGET_USD` | ✅ | 10.0 |
 | `LOG_LEVEL` | ✅ | INFO |
@@ -57,23 +57,82 @@ curl -i -X POST <URL>/ask \
   -H "X-API-Key: $AGENT_API_KEY" \
   -H "X-User-Id: sv-test" \
   -d '{"question":"Deploy là gì?"}'
+# Git Bash trên Windows làm hỏng mã hóa tiếng Việt trong -d (server trả 400
+# "There was an error parsing the body") → gửi body từ file UTF-8:
+#   printf '{"question":"Deploy là gì?"}' > ask.json
+#   curl -i -X POST <URL>/ask ... --data-binary @ask.json
 
 # 5. Rate limit — gọi 15 lần, những lần cuối phải trả 429
+#    (dùng user riêng để lượt gọi ở bước 4 không chiếm quota)
 for i in $(seq 1 15); do
   curl -s -o /dev/null -w "%{http_code} " -X POST <URL>/ask \
     -H "Content-Type: application/json" \
     -H "X-API-Key: $AGENT_API_KEY" \
-    -H "X-User-Id: sv-test" \
+    -H "X-User-Id: sv-ratelimit" \
     -d '{"question":"test"}'
 done; echo
 ```
 
 ## Kết Quả Chạy Thật
 
-Dán output của các lệnh trên vào đây:
+Output thật chạy ngày 2026-09-29 (Git Bash; `AGENT_API_KEY` lấy từ `DEPLOY_API_KEY` trong `.env`, không in giá trị):
 
 ```
-(điền output)
+$ curl -i <URL>/health
+HTTP/1.1 200 OK
+Content-Type: application/json
+Date: Tue, 29 Sep 2026 04:22:40 GMT
+Server: railway-hikari
+x-railway-request-id: rHh-i2wYS2ehLnfe9fVATg
+Content-Length: 57
+x-hikari-trace: sin1.tr00
+x-railway-edge: sin1
+Connection: keep-alive
+
+{"status":"ok","service":"day12-agent","version":"1.0.0"}
+
+$ curl -i <URL>/ready
+HTTP/1.1 200 OK
+Content-Type: application/json
+Date: Tue, 29 Sep 2026 04:22:41 GMT
+Server: railway-hikari
+x-railway-request-id: fXYeX_bOTMmgAZRGljLL4A
+Content-Length: 31
+x-hikari-trace: hkg1.aebn
+x-railway-edge: hkg1
+Connection: keep-alive
+
+{"status":"ready","redis":true}
+
+$ curl -i -X POST <URL>/ask (không có X-API-Key)
+HTTP/1.1 401 Unauthorized
+Content-Type: application/json
+Date: Tue, 29 Sep 2026 04:22:42 GMT
+Server: railway-hikari
+x-railway-request-id: ImkA6wD0Qq-u5meY2prcFg
+Content-Length: 39
+x-hikari-trace: hkg1.aebn
+x-railway-edge: hkg1
+Connection: keep-alive
+
+{"detail":"invalid or missing API key"}
+
+$ curl -i -X POST <URL>/ask -H "X-API-Key: $AGENT_API_KEY" -H "X-User-Id: sv-test" --data-binary @ask.json
+HTTP/1.1 200 OK
+Content-Type: application/json
+Date: Tue, 29 Sep 2026 04:23:03 GMT
+Server: railway-hikari
+x-railway-request-id: nMDpvhOQTEGmB4ngWUN5dQ
+Content-Length: 279
+x-hikari-trace: sin1.tr00
+x-railway-edge: sin1
+vary: accept-encoding
+Connection: keep-alive
+
+{"answer":"Câu hỏi hay. Deploy là gì thường được giải quyết bằng cách chuẩn hóa môi trường chạy: cùng một image chạy giống nhau ở laptop và trên cloud.","user_id":"sv-test","history_length":0,"cost_usd":2.145e-05,"tokens":{"in":3,"out":35}}
+
+$ for i in $(seq 1 15); do curl ... -H "X-User-Id: sv-ratelimit" ...; done
+200 200 200 200 200 200 200 200 200 200 429 429 429 429 429
 ```
 
 ## Ảnh Chụp Màn Hình
@@ -82,20 +141,3 @@ Dán output của các lệnh trên vào đây:
 
 - `screenshots/dashboard.png` — trang quản lý service trên platform
 - `screenshots/health.png` — kết quả gọi `/health` từ trình duyệt hoặc curl
-
----
-
-## Nếu Dùng Phương Án Dự Phòng
-
-Không đăng ký được tài khoản cloud? Vẫn nộp được bài, nhưng CP5 tối đa 60% điểm:
-
-1. Đặt `LOCAL_FALLBACK=true` trong `.env`
-2. Chạy `docker compose up -d` rồi kiểm tra `docker compose ps`
-3. Chụp màn hình vào `screenshots/`
-4. Chạy `pytest tests/test_cp5.py -v` — bộ test sẽ tự chuyển sang kiểm tra
-   `http://localhost:8000`
-5. Ghi rõ lý do không deploy được vào phần dưới đây:
-
-```
-(điền lý do nếu dùng phương án dự phòng, ngược lại xóa mục này)
-```

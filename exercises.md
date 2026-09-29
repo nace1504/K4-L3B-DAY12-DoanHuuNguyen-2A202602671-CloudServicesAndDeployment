@@ -166,4 +166,9 @@ Ghi lại **một** lỗi bạn gặp khi deploy lên cloud (build fail, health 
 timeout, sai REDIS_URL, app không đọc `$PORT`...): thông báo lỗi là gì, bạn
 tìm ra nguyên nhân bằng cách nào, và sửa ra sao?
 
-> *Câu trả lời của bạn*
+> Bản thân lần deploy lên Railway chạy được ngay lần đầu vì em đã phòng trước: bỏ `startCommand` trong `railway.toml` (Railway có thể không mở `$PORT`) để dùng CMD của Dockerfile là `sh -c "exec uvicorn ... --port ${PORT:-8000}"`, và log Railway xác nhận `Uvicorn running on http://0.0.0.0:8080` cùng `Started server process [1]`.
+> Lỗi em gặp là lúc gọi service đã deploy: lệnh `curl -X POST <URL>/ask` có key hợp lệ với body `-d '{"question":"Deploy là gì?"}'` chạy trong Git Bash trên Windows trả `400 {"detail":"There was an error parsing the body"}`.
+> Để khoanh vùng, em so với các lệnh khác gọi cùng URL: `/health`, `/ready`, `/ask` không key (401) và 15 lần `/ask` với body ASCII `{"question":"test"}` đều chạy đúng, chỉ riêng body có tiếng Việt bị lỗi, nên nghi vấn đề mã hóa ký tự chứ không phải app hay Railway.
+> Em ghi body ra file bằng `printf` rồi kiểm tra byte bằng `od -c`, thấy chữ "là" là `l 303 240` đúng UTF-8, tức là file đúng còn cách truyền chuỗi qua tham số dòng lệnh vào `curl.exe` trên Windows làm hỏng mã hóa, khiến server nhận JSON không hợp lệ.
+> Em sửa bằng cách gửi body từ file: `curl ... --data-binary @ask.json`, lần này trả `200` kèm câu trả lời tiếng Việt đúng, và em ghi chú cách này vào `DEPLOYMENT.md`.
+> Bài học là khi gặp lỗi trên cloud nên so sánh request lỗi với request chạy đúng để tìm điểm khác nhau, trước khi đổ lỗi cho server.
