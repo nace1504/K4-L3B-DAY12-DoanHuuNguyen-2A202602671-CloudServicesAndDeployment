@@ -1,0 +1,74 @@
+# BONUS — CI/CD: mỗi lần push/PR vào main thì test + build trên máy sạch,
+# chỉ khi cả hai xanh và là push vào main mới deploy lên Railway.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # test_cp5 gọi vào bản deploy đang sống, test_bonus_cicd kiểm tra badge của
+      # chính workflow này → loại cả hai khỏi CI.
+      - name: Run tests
+        env:
+          AGENT_API_KEY: ci-dummy
+          REDIS_URL: "fake://"
+        run: pytest tests/ -v --ignore=tests/test_cp5.py --ignore=tests/test_bonus_cicd.py
+
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t day12-agent:ci .
+
+  deploy:
+    name: deploy
+    needs: [test, build]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    # Hai lần push sát nhau thì lần sau đợi lần trước deploy xong, không chạy chồng.
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli@5.63.1
+
+      # --ci: chờ build + deploy trên Railway xong và trả mã lỗi nếu hỏng,
+      # thay vì --detach (luôn xanh dù bản mới build lỗi).
+      - name: Deploy to Railway
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: railway up --service agent --ci
+
+      - name: Smoke test
+        run: |
+          for i in $(seq 1 10); do
+            if curl -fsS "${{ vars.PUBLIC_URL }}/health"; then
+              echo; echo "health OK (lần thử $i)"; exit 0
+            fi
+            echo "chưa sẵn sàng, thử lại sau 15s ($i/10)"; sleep 15
+          done
+          echo "service không trả /health 200 sau khi deploy"; exit 1
